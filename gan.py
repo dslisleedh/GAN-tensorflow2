@@ -21,33 +21,29 @@ class GAN(tf.keras.models.Model):
 
     def train_step(self, Input):
         X = tf.reshape(Input, shape = (-1, 28, 28, 1))
-        X += tf.random.normal(stddev=.025, shape = tf.shape(X))
-        random_latent = tf.random.normal(shape = (self.batch_size, self.dim_latent))
 
-        generated_images = self.G(random_latent)
-        combined_images = tf.concat([generated_images, X], axis = 0)
-        y = tf.concat([tf.ones(shape = (self.batch_size, 1)),
-                       tf.zeros(shape = (self.batch_size, 1)),],
-                      axis = 0
-                     )
-
+        #1 Update Discriminator
+        generated_images = self.G(tf.random.normal(shape = (self.batch_size, self.dim_latent)))
         with tf.GradientTape() as tape:
-            y_pred = self.D(combined_images)
-            d_loss = self.loss_fn(y, y_pred)
+            output_true = self.D(X)
+            output_fake = self.D(generated_images)
+            t_loss = self.loss_fn(tf.zeros(shape = tf.shape(output_true)), output_true)
+            f_loss = self.loss_fn(tf.ones(shape = tf.shape(output_fake)), output_fake)
+            d_loss = t_loss + f_loss
         grads = tape.gradient(d_loss, self.D.trainable_variables)
         self.d_optimizer.apply_gradients(
             zip(grads, self.D.trainable_variables)
         )
 
+        #2 Update Generator
         with tf.GradientTape() as tape:
-            y_pred = self.D(self.G(random_latent))
+            y_pred = self.D(self.G(tf.random.normal(shape = (self.batch_size, self.dim_latent))))
             g_loss = self.loss_fn(tf.zeros(shape = (self.batch_size, 1)), y_pred)
         grads = tape.gradient(g_loss, self.G.trainable_variables)
         self.g_optimizer.apply_gradients(
             zip(grads, self.G.trainable_variables)
         )
         return {"d_loss" : d_loss, "g_loss" : g_loss}
-
 
 
 class Discrimimator(tf.keras.layers.Layer):
