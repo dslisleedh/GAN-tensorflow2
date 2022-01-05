@@ -2,15 +2,11 @@ import tensorflow as tf
 import numpy as np
 
 class GAN(tf.keras.models.Model):
-    def __init__(self, batch_size = 100, dim_latent = 25, disc_n_downsampling = 2, disc_n_filters = 128, disc_kernel_size = 3):
+    def __init__(self, dim_latent = 25):
         super(GAN, self).__init__()
-        self.batch_size = batch_size
         self.dim_latent = dim_latent
-        self.disc_n_downsampling = disc_n_downsampling
-        self.disc_n_filters = disc_n_filters
-        self.disc_kernel_size = disc_kernel_size
 
-        self.D = Discrimimator(self.disc_n_downsampling, self.disc_n_filters, self.disc_kernel_size)
+        self.D = Discrimimator()
         self.G = Generator(self.dim_latent)
 
     def compile(self, d_optimizer, g_optimizer, loss_fn):
@@ -19,11 +15,9 @@ class GAN(tf.keras.models.Model):
         self.g_optimizer = g_optimizer
         self.loss_fn = loss_fn
 
-    def train_step(self, Input):
-        X = tf.reshape(Input, shape = (-1, 28, 28, 1))
-
+    def train_step(self, X):
         #1 Update Discriminator
-        generated_images = self.G(tf.random.normal(shape = (self.batch_size, self.dim_latent)))
+        generated_images = self.G(tf.random.normal(shape = (tf.shape(X)[0], self.dim_latent)))
         with tf.GradientTape() as tape:
             output_true = self.D(X)
             output_fake = self.D(generated_images)
@@ -37,8 +31,8 @@ class GAN(tf.keras.models.Model):
 
         #2 Update Generator
         with tf.GradientTape() as tape:
-            y_pred = self.D(self.G(tf.random.normal(shape = (self.batch_size, self.dim_latent))))
-            g_loss = self.loss_fn(tf.zeros(shape = (self.batch_size, 1)), y_pred)
+            y_pred = self.D(self.G(tf.random.normal(shape = (tf.shape(X)[0], self.dim_latent))))
+            g_loss = self.loss_fn(tf.zeros(shape = tf.shape(y_pred)), y_pred)
         grads = tape.gradient(g_loss, self.G.trainable_variables)
         self.g_optimizer.apply_gradients(
             zip(grads, self.G.trainable_variables)
@@ -47,20 +41,24 @@ class GAN(tf.keras.models.Model):
 
 
 class Discrimimator(tf.keras.layers.Layer):
-    def __init__(self, n_downsampling, n_filters, kernel_size):
+    def __init__(self):
         super(Discrimimator, self).__init__()
-        self.n_downsampling = n_downsampling
-        self.n_filters = n_filters
-        self.kernel_size = kernel_size
 
         self.Downsampling = tf.keras.Sequential([
-            tf.keras.layers.Conv2D(filters = self.n_filters * (i+1),
-                                   kernel_size = self.kernel_size,
+            tf.keras.layers.Conv2D(filters =64,
+                                   kernel_size = (3,3),
                                    strides = (2,2),
                                    padding = 'same',
-                                   activation = 'relu',
                                    kernel_initializer = 'he_normal'
-                                   ) for i in range(self.n_downsampling)
+                                   ),
+            tf.keras.layers.LeakyReLU(.15),
+            tf.keras.layers.Conv2D(filters=128,
+                                   kernel_size=(3, 3),
+                                   strides=(2, 2),
+                                   padding='same',
+                                   kernel_initializer='he_normal'
+                                   ),
+            tf.keras.layers.LeakyReLU(.15),
         ])
 
         self.Classifier = tf.keras.Sequential([
@@ -85,14 +83,14 @@ class Generator(tf.keras.layers.Layer):
                                         kernel_initializer = 'he_normal'
                                        )
         self.Upsampling = tf.keras.Sequential([
-            tf.keras.layers.Conv2DTranspose(64,
+            tf.keras.layers.Conv2DTranspose(128,
                                             kernel_size = (4,4),
                                             strides = (2,2),
                                             padding = 'same',
                                             activation = 'relu',
                                             kernel_initializer = 'he_normal'
                                             ),
-            tf.keras.layers.Conv2DTranspose(128,
+            tf.keras.layers.Conv2DTranspose(64,
                                             kernel_size = (4,4),
                                             strides = (2,2),
                                             padding = 'same',
