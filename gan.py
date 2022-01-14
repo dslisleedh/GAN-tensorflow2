@@ -1,5 +1,4 @@
 import tensorflow as tf
-import numpy as np
 
 class GAN(tf.keras.models.Model):
     def __init__(self, dim_latent = 25):
