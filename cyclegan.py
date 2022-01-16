@@ -15,7 +15,6 @@ class Resnetblock(tf.keras.layers.Layer):
                                    ),
             tf.keras.layers.LayerNormalization(),
             tf.keras.layers.ReLU(),
-            tf.keras.layers.Dropout(.5),
             tf.keras.layers.Conv2D(filters=self.n_filters,
                                    kernel_size=(3, 3),
                                    padding='same',
@@ -140,7 +139,7 @@ class Discriminator(tf.keras.layers.Layer):
         ])
 
     def call(self, X):
-        return tf.reduce_mean(self.forward(X), axis=[1, 2])
+        return self.forward(X)
 
 
 class Cyclegan(tf.keras.models.Model):
@@ -156,44 +155,29 @@ class Cyclegan(tf.keras.models.Model):
         self.F = Generator()
         self.Disc_x = Discriminator()
         self.Disc_y = Discriminator()
-        self.g_hist = []
-        self.f_hist = []
 
-    def compile(self, disc_x_optimizer,
-                disc_y_optimizer,
-                g_optimizer,
-                f_optimizer
-                ):
+    def compile(self, lr):
         super(Cyclegan, self).compile()
-        self.disc_x_optimizer = disc_x_optimizer
-        self.disc_y_optimizer = disc_y_optimizer
-        self.g_optimizer = g_optimizer
-        self.f_optimizer = f_optimizer
+        self.disc_x_optimizer = tf.keras.optimizers.Adam(lr)
+        self.disc_y_optimizer = tf.keras.optimizers.Adam(lr)
+        self.g_optimizer = tf.keras.optimizers.Adam(lr)
+        self.f_optimizer = tf.keras.optimizers.Adam(lr)
 
     def build(self, Input_shape):
         super(Cyclegan, self).build(Input_shape)
 
-    @tf.function
     def train_step(self, data):
         X, y = data
 
         with tf.GradientTape(persistent=True) as tape:
-            if self.g_hist == []:
-                self.g_hist = self.G(X)
-            else:
-                self.g_hist = tf.concat([self.g_hist, self.G(X)], axis=0)
-            X_recon = self.F(self.g_hist[-1])
-            self.g_hist = self.g_hist[-50:]
-            if self.f_hist == []:
-                self.f_hist = self.F(y)
-            else:
-                self.f_hist = tf.concat([self.f_hist, self.F(y)], axis=0)
-            self.f_hist = self.f_hist[-50:]
-            y_recon = self.G(self.f_hist[-1])
+            y_hat = self.G(X)
+            X_recon = self.F(y_hat)
+            X_hat = self.G(X)
+            y_recon = self.F(X_hat)
             disc_y_true = self.Disc_y(y)
-            disc_y_fake = self.Disc_y(self.g_hist)
+            disc_y_fake = self.Disc_y(y_hat)
             disc_x_true = self.Disc_x(X)
-            disc_x_fake = self.Disc_x(self.f_hist)
+            disc_x_fake = self.Disc_x(X_hat)
 
             disc_y_loss = tf.reduce_mean(
                 tf.square(disc_y_true - 1.)
@@ -242,12 +226,13 @@ class Cyclegan(tf.keras.models.Model):
 
         return {'Disc_X_loss': disc_x_loss,
                 'Disc_y_loss': disc_y_loss,
-                'Gen_X_loss': gen_g_loss,
-                'Gen_y_loss': gen_f_loss
+                'G_loss': gen_g_loss,
+                'F_loss': gen_f_loss
                 }
 
     @tf.function
-    def call(self, X):
+    def call(self, data):
+        X, y = data
         y_hat = self.G(X)
         X_hat = self.F(X)
         _ = self.Disc_y(X)
