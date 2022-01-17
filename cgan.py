@@ -31,7 +31,6 @@ class Discrimimator(tf.keras.layers.Layer):
                                   )
         ])
 
-    @tf.function
     def call(self, X, y):
         return self.Classifier(self.Downsampling(
             tf.concat([X, tf.ones(shape = (tf.shape(y)[0], 1, 1, self.n_labels)) * tf.reshape(y, (tf.shape(y)[0], 1, 1, tf.shape(y)[1]))],
@@ -79,6 +78,7 @@ class Generator(tf.keras.layers.Layer):
                        shape = (-1,7,7,self.dim_latent)
                        )
         )
+
 
 class Cgan(tf.keras.models.Model):
     def __init__(self, dim_latent = 30, n_labels = 10):

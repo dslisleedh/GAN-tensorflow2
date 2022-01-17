@@ -1,27 +1,28 @@
 import tensorflow as tf
 
-
 class Resnetblock(tf.keras.layers.Layer):
     def __init__(self, n_filters=256):
         super(Resnetblock, self).__init__()
         self.n_filters = n_filters
 
         self.forward = tf.keras.Sequential([
+            ReflectPadding2D(1),
             tf.keras.layers.Conv2D(filters=self.n_filters,
                                    kernel_size=(3, 3),
-                                   padding='same',
+                                   padding='valid',
                                    use_bias=False,
                                    activation='linear'
                                    ),
-            tf.keras.layers.LayerNormalization(),
+            tf.keras.layers.BatchNormalization(),
             tf.keras.layers.ReLU(),
+            ReflectPadding2D(1),
             tf.keras.layers.Conv2D(filters=self.n_filters,
                                    kernel_size=(3, 3),
-                                   padding='same',
+                                   padding='valid',
                                    use_bias=False,
                                    activation='linear'
                                    ),
-            tf.keras.layers.LayerNormalization()
+            tf.keras.layers.BatchNormalization()
         ])
 
     def call(self, X):
@@ -57,7 +58,7 @@ class Generator(tf.keras.layers.Layer):
                                    use_bias=False,
                                    padding='valid'
                                    ),
-            tf.keras.layers.LayerNormalization(),
+            tf.keras.layers.BatchNormalization(),
             tf.keras.layers.ReLU()
         ])
         for i in range(2):
@@ -69,7 +70,7 @@ class Generator(tf.keras.layers.Layer):
                                                          activation='linear'
                                                          )
                                   )
-            self.downsampling.add(tf.keras.layers.LayerNormalization())
+            self.downsampling.add(tf.keras.layers.BatchNormalization())
             self.downsampling.add(tf.keras.layers.ReLU())
         self.resblocks = tf.keras.Sequential(
             [Resnetblock() for _ in range(9)]
@@ -83,7 +84,7 @@ class Generator(tf.keras.layers.Layer):
                                                                 use_bias='False'
                                                                 )
                                 )
-            self.upsampling.add(tf.keras.layers.LayerNormalization())
+            self.upsampling.add(tf.keras.layers.BatchNormalization())
             self.upsampling.add(tf.keras.layers.ReLU())
         self.upsampling.add(ReflectPadding2D(3))
         self.upsampling.add(tf.keras.layers.Conv2D(filters=3,
@@ -113,7 +114,7 @@ class DiscDownsamplingBlock(tf.keras.layers.Layer):
                                    padding='valid',
                                    activation='linear'
                                    ),
-            tf.keras.layers.LayerNormalization(),
+            tf.keras.layers.BatchNormalization(),
             tf.keras.layers.LeakyReLU(0.2)
         ])
 
@@ -146,7 +147,7 @@ class Cyclegan(tf.keras.models.Model):
     '''
     Must set batch_size as 1
     '''
-    def __init__(self, lamb, identity_loss=False):
+    def __init__(self, lamb=10., identity_loss=False):
         super(Cyclegan, self).__init__()
         self.lamb = lamb
         self.identity_loss = identity_loss
@@ -163,49 +164,47 @@ class Cyclegan(tf.keras.models.Model):
         self.g_optimizer = tf.keras.optimizers.Adam(lr)
         self.f_optimizer = tf.keras.optimizers.Adam(lr)
 
-    def build(self, Input_shape):
-        super(Cyclegan, self).build(Input_shape)
-
+    @tf.function
     def train_step(self, data):
         X, y = data
 
         with tf.GradientTape(persistent=True) as tape:
             y_hat = self.G(X)
             X_recon = self.F(y_hat)
-            X_hat = self.G(X)
-            y_recon = self.F(X_hat)
+            X_hat = self.F(y)
+            y_recon = self.G(X_hat)
             disc_y_true = self.Disc_y(y)
             disc_y_fake = self.Disc_y(y_hat)
             disc_x_true = self.Disc_x(X)
             disc_x_fake = self.Disc_x(X_hat)
 
-            disc_y_loss = tf.reduce_mean(
+            disc_y_loss = .5 * (tf.reduce_mean(
                 tf.square(disc_y_true - 1.)
             ) + tf.reduce_mean(
                 tf.square(disc_y_fake)
-            )
-            disc_x_loss = tf.reduce_mean(
+            ))
+            disc_x_loss = .5 * (tf.reduce_mean(
                 tf.square(disc_x_true - 1.)
             ) + tf.reduce_mean(
                 tf.square(disc_x_fake)
-            )
+            ))
             gen_g_loss = tf.reduce_mean(
-                tf.square(disc_y_fake)
+                tf.square(disc_y_fake - 1.)
             ) + self.lamb * tf.reduce_mean(
                 tf.abs(X - X_recon)
             )
             gen_f_loss = tf.reduce_mean(
-                tf.square(disc_x_fake)
+                tf.square(disc_x_fake - 1.)
             ) + self.lamb * tf.reduce_mean(
                 tf.abs(y - y_recon)
             )
             if self.identity_loss:
-                gen_g_loss += tf.reduce_mean(
+                gen_g_loss += self.lamb * .5 * (tf.reduce_mean(
                     tf.abs(self.G(y) - y)
-                )
-                gen_f_loss += tf.reduce_mean(
+                ))
+                gen_f_loss += self.lamb * .5 * (tf.reduce_mean(
                     tf.abs(self.F(X) - X)
-                )
+                ))
 
         grads = tape.gradient(disc_y_loss, self.Disc_y.trainable_variables)
         self.disc_y_optimizer.apply_gradients(
@@ -231,8 +230,7 @@ class Cyclegan(tf.keras.models.Model):
                 }
 
     @tf.function
-    def call(self, data):
-        X, y = data
+    def call(self, X):
         y_hat = self.G(X)
         X_hat = self.F(X)
         _ = self.Disc_y(X)
