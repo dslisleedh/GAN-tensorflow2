@@ -1,5 +1,6 @@
 import tensorflow as tf
 
+
 class Resnetblock(tf.keras.layers.Layer):
     def __init__(self, n_filters=256):
         super(Resnetblock, self).__init__()
@@ -107,11 +108,10 @@ class DiscDownsamplingBlock(tf.keras.layers.Layer):
         self.strides = strides
 
         self.forward = tf.keras.Sequential([
-            tf.keras.layers.ZeroPadding2D(1),
             tf.keras.layers.Conv2D(filters=self.n_filters,
                                    kernel_size=(4, 4),
                                    strides=self.strides,
-                                   padding='valid',
+                                   padding='same',
                                    activation='linear'
                                    ),
             tf.keras.layers.BatchNormalization(),
@@ -127,20 +127,25 @@ class Discriminator(tf.keras.layers.Layer):
         super(Discriminator, self).__init__()
 
         self.forward = tf.keras.Sequential([
-            DiscDownsamplingBlock(64),
+            tf.keras.layers.Conv2D(filters = 64,
+                                   kernel_size = (4, 4),
+                                   strides = (2, 2),
+                                   padding = 'same',
+                                   activation = tf.keras.layers.LeakyReLU(.2)
+                                  ),
             DiscDownsamplingBlock(128),
             DiscDownsamplingBlock(256),
             DiscDownsamplingBlock(512, strides=1),
-            tf.keras.layers.ZeroPadding2D(1),
             tf.keras.layers.Conv2D(filters=1,
                                    kernel_size=(4, 4),
                                    activation='sigmoid',
-                                   padding='valid'
+                                   padding='same'
                                    )
         ])
 
     def call(self, X):
         return self.forward(X)
+
 
 
 class Cyclegan(tf.keras.models.Model):
@@ -165,6 +170,23 @@ class Cyclegan(tf.keras.models.Model):
         self.f_optimizer = tf.keras.optimizers.Adam(lr, beta_1=.5)
 
     @tf.function
+    def cycle_loss(self, real_image, recon_image):
+        l1_loss = tf.reduce_mean(
+            tf.abs(recon_image - recon_image)
+        )
+        return self.lamb * l1_loss
+
+    @tf.function
+    def gen_loss(self, fake):
+        gen_loss = tf.keras.losses.MSE(tf.ones_like(fake), fake)
+        return gen_loss
+
+    @tf.function
+    def disc_loss(self, label, disc):
+        disc_loss = tf.keras.losses.MSE(label, disc)
+        return disc_loss
+
+    @tf.function
     def train_step(self, data):
         X, y = data
 
@@ -178,50 +200,43 @@ class Cyclegan(tf.keras.models.Model):
             disc_x_true = self.Disc_x(X)
             disc_x_fake = self.Disc_x(X_hat)
 
-            disc_y_loss = .5 * (tf.reduce_mean(
-                tf.square(disc_y_true - tf.ones_like(disc_y_true))
-            ) + tf.reduce_mean(
-                tf.square(disc_y_fake)
-            ))
-            disc_x_loss = .5 * (tf.reduce_mean(
-                tf.square(disc_x_true - tf.ones_like(disc_x_true))
-            ) + tf.reduce_mean(
-                tf.square(disc_x_fake)
-            ))
-            gen_g_loss = tf.reduce_mean(
-                tf.square(disc_y_fake - tf.ones_like(disc_y_fake))
-            ) + self.lamb * tf.reduce_mean(
-                tf.abs(X - X_recon)
-            )
-            gen_f_loss = tf.reduce_mean(
-                tf.square(disc_x_fake - tf.ones_like(disc_x_fake))
-            ) + self.lamb * tf.reduce_mean(
-                tf.abs(y - y_recon)
-            )
+            disc_y_loss = .5 * (self.disc_loss(tf.ones_like(disc_y_true),
+                                               disc_y_true) +
+                                self.disc_loss(tf.zeros_like(disc_y_fake),
+                                               disc_y_fake
+                                               )
+                                )
+            disc_x_loss = .5 * (self.disc_loss(tf.ones_like(disc_x_true),
+                                               disc_x_true
+                                               ) +
+                                self.disc_loss(tf.zeros_like(disc_x_fake),
+                                               disc_x_fake
+                                               )
+                                )
+            gen_g_loss = self.gen_loss(disc_y_fake) + self.cycle_loss(X, X_recon)
+            gen_f_loss = self.gen_loss(disc_x_fake) + self.cycle_loss(y, y_recon)
             if self.identity_loss:
-                gen_g_loss += self.lamb * .5 * tf.reduce_mean(
-                    tf.abs(y, self.G(y))
-                )
-                gen_f_loss += self.lamb * .5 * tf.reduce_mean(
-                    tf.abs(X, self.F(X))
-                )
+                gen_g_loss += .5 * self.cycle_loss(y, self.G(y))
+                gen_f_loss += .5 * self.cycle_loss(X, self.F(X))
+            g_loss = gen_g_loss + gen_f_loss
 
-        grads = tape.gradient(disc_y_loss, self.Disc_y.trainable_variables)
+        grads_y = tape.gradient(disc_y_loss, self.Disc_y.trainable_variables)
         self.disc_y_optimizer.apply_gradients(
-            zip(grads, self.Disc_y.trainable_variables)
+            zip(grads_y, self.Disc_y.trainable_variables)
         )
-        grads = tape.gradient(disc_x_loss, self.Disc_x.trainable_variables)
+        grads_x = tape.gradient(disc_x_loss, self.Disc_x.trainable_variables)
         self.disc_x_optimizer.apply_gradients(
-            zip(grads, self.Disc_x.trainable_variables)
+            zip(grads_x, self.Disc_x.trainable_variables)
         )
-        grads = tape.gradient(gen_g_loss, self.G.trainable_variables)
-        self.g_optimizer.apply_gradients(
-            zip(grads, self.G.trainable_variables)
-        )
-        grads = tape.gradient(gen_f_loss, self.F.trainable_variables)
-        self.f_optimizer.apply_gradients(
-            zip(grads, self.F.trainable_variables)
-        )
+        for _ in range(2):
+            grads_g = tape.gradient(g_loss, self.G.trainable_variables)
+            self.g_optimizer.apply_gradients(
+                zip(grads_g, self.G.trainable_variables)
+            )
+            grads_f = tape.gradient(g_loss, self.F.trainable_variables)
+            self.f_optimizer.apply_gradients(
+                zip(grads_f, self.F.trainable_variables)
+            )
 
         return {'Disc_X_loss': disc_x_loss,
                 'Disc_y_loss': disc_y_loss,
