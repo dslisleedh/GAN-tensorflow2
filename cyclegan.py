@@ -159,10 +159,10 @@ class Cyclegan(tf.keras.models.Model):
 
     def compile(self, lr):
         super(Cyclegan, self).compile()
-        self.disc_x_optimizer = tf.keras.optimizers.Adam(lr)
-        self.disc_y_optimizer = tf.keras.optimizers.Adam(lr)
-        self.g_optimizer = tf.keras.optimizers.Adam(lr)
-        self.f_optimizer = tf.keras.optimizers.Adam(lr)
+        self.disc_x_optimizer = tf.keras.optimizers.Adam(lr, beta_1=.5)
+        self.disc_y_optimizer = tf.keras.optimizers.Adam(lr, beta_1=.5)
+        self.g_optimizer = tf.keras.optimizers.Adam(lr, beta_1=.5)
+        self.f_optimizer = tf.keras.optimizers.Adam(lr, beta_1=.5)
 
     @tf.function
     def train_step(self, data):
@@ -179,32 +179,32 @@ class Cyclegan(tf.keras.models.Model):
             disc_x_fake = self.Disc_x(X_hat)
 
             disc_y_loss = .5 * (tf.reduce_mean(
-                tf.square(disc_y_true - 1.)
+                tf.square(disc_y_true - tf.ones_like(disc_y_true))
             ) + tf.reduce_mean(
                 tf.square(disc_y_fake)
             ))
             disc_x_loss = .5 * (tf.reduce_mean(
-                tf.square(disc_x_true - 1.)
+                tf.square(disc_x_true - tf.ones_like(disc_x_true))
             ) + tf.reduce_mean(
                 tf.square(disc_x_fake)
             ))
             gen_g_loss = tf.reduce_mean(
-                tf.square(disc_y_fake - 1.)
+                tf.square(disc_y_fake - tf.ones_like(disc_y_fake))
             ) + self.lamb * tf.reduce_mean(
                 tf.abs(X - X_recon)
             )
             gen_f_loss = tf.reduce_mean(
-                tf.square(disc_x_fake - 1.)
+                tf.square(disc_x_fake - tf.ones_like(disc_x_fake))
             ) + self.lamb * tf.reduce_mean(
                 tf.abs(y - y_recon)
             )
             if self.identity_loss:
-                gen_g_loss += self.lamb * .5 * (tf.reduce_mean(
-                    tf.abs(self.G(y) - y)
-                ))
-                gen_f_loss += self.lamb * .5 * (tf.reduce_mean(
-                    tf.abs(self.F(X) - X)
-                ))
+                gen_g_loss += self.lamb * .5 * tf.reduce_mean(
+                    tf.abs(y, self.G(y))
+                )
+                gen_f_loss += self.lamb * .5 * tf.reduce_mean(
+                    tf.abs(X, self.F(X))
+                )
 
         grads = tape.gradient(disc_y_loss, self.Disc_y.trainable_variables)
         self.disc_y_optimizer.apply_gradients(
