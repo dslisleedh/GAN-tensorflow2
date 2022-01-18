@@ -185,10 +185,10 @@ class Cyclegan(tf.keras.models.Model):
         self.hist_x = history()
         self.hist_y = history()
 
-    def compile(self, lr):
+    def compile(self, optimizer):
         super(Cyclegan, self).compile()
-        self.disc_optimizer = tf.keras.optimizers.Adam(lr, beta_1=.5)
-        self.gen_optimizer = tf.keras.optimizers.Adam(lr, beta_1=.5)
+        self.disc_optimizer = optimizer
+        self.gen_optimizer = optimizer
 
     @tf.function
     def cycle_loss(self, real_image, recon_image):
