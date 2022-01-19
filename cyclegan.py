@@ -26,8 +26,8 @@ class Resnetblock(tf.keras.layers.Layer):
             tf.keras.layers.BatchNormalization()
         ])
 
-    def call(self, X):
-        return self.forward(X) + X
+    def call(self, inputs, **kwargs):
+        return self.forward(inputs) + inputs
 
 
 class ReflectPadding2D(tf.keras.layers.Layer):
@@ -35,8 +35,8 @@ class ReflectPadding2D(tf.keras.layers.Layer):
         super(ReflectPadding2D, self).__init__()
         self.n_pad = n_pad
 
-    def call(self, X):
-        return tf.pad(X,
+    def call(self, inputs, **kwargs):
+        return tf.pad(inputs,
                       paddings=[[0, 0],
                                 [self.n_pad, self.n_pad],
                                 [self.n_pad, self.n_pad],
@@ -95,8 +95,8 @@ class Generator(tf.keras.layers.Layer):
                                                    )
                             )
 
-    def call(self, X):
-        y = self.downsampling(X)
+    def call(self, inputs, **kwargs):
+        y = self.downsampling(inputs)
         y = self.resblocks(y)
         return tf.nn.tanh(self.upsampling(y))
 
@@ -118,8 +118,8 @@ class DiscDownsamplingBlock(tf.keras.layers.Layer):
             tf.keras.layers.LeakyReLU(0.2)
         ])
 
-    def call(self, X):
-        return self.forward(X)
+    def call(self, inputs, **kwargs):
+        return self.forward(inputs)
 
 
 class Discriminator(tf.keras.layers.Layer):
@@ -143,8 +143,8 @@ class Discriminator(tf.keras.layers.Layer):
                                    )
         ])
 
-    def call(self, X):
-        return self.forward(X)
+    def call(self, inputs, **kwargs):
+        return self.forward(inputs)
 
 
 class history:

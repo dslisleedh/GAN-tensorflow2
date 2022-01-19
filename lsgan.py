@@ -120,9 +120,8 @@ class Discriminator(tf.keras.layers.Layer):
 
 
 class Lsgan(tf.keras.models.Model):
-    def __init__(self, batch_size = 32):
+    def __init__(self):
         super(Lsgan, self).__init__()
-        self.batch_size = batch_size
 
         self.Generator = Generator()
         self.Generator.build((None, 1024))
@@ -153,7 +152,7 @@ class Lsgan(tf.keras.models.Model):
     @tf.function
     def train_step(self, img):
         with tf.GradientTape(persistent=True) as tape:
-            fake = self.Generator(tf.random.normal(shape=(self.batch_size, 1024)))
+            fake = self.Generator(tf.random.normal(shape=(tf.shape(img)[0], 1024)))
             disc_true = self.Discriminator(img)
             disc_fake = self.Discriminator(fake)
             disc_loss = self.ls_disc_loss(disc_true, disc_fake)
