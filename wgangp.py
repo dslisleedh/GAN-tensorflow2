@@ -48,6 +48,9 @@ class Generator(tf.keras.layers.Layer):
 
 
 class Critic(tf.keras.layers.Layer):
+    '''
+    Only replaced batch normalization to layer normalization
+    '''
     def __init__(self, c):
         super(Critic, self).__init__()
         self.ki = tf.keras.initializers.random_normal(stddev=.02)
@@ -69,7 +72,7 @@ class Critic(tf.keras.layers.Layer):
                                    kernel_initializer=self.ki,
                                    use_bias=False
                                    ),
-            tf.keras.layers.BatchNormalization(),
+            tf.keras.layers.LayerNormalization(),
             tf.keras.layers.LeakyReLU(.2),
             tf.keras.layers.Conv2D(filters=256,
                                    kernel_size=(5, 5),
@@ -79,7 +82,7 @@ class Critic(tf.keras.layers.Layer):
                                    kernel_initializer=self.ki,
                                    use_bias=False
                                    ),
-            tf.keras.layers.BatchNormalization(),
+            tf.keras.layers.LayerNormalization(),
             tf.keras.layers.LeakyReLU(.2),
             tf.keras.layers.Conv2D(filters=1,
                                    kernel_size=(4, 4),
@@ -94,68 +97,113 @@ class Critic(tf.keras.layers.Layer):
         return self.downsampling(inputs)
 
 
-class Wgan(tf.keras.models.Model):
+
+class WganGp(tf.keras.models.Model):
     '''
-    set train batch_size as 64 * n_critic
+    Wasserstein GAN - Gradient Penalty
     '''
-    def __init__(self):
-        super(Wgan, self).__init__()
-        self.alpha = .00005
-        self.c = 0.01
-        self.n_critic = 5
+    def __init__(self,
+                 lamb=10.,
+                 n_critic=5,
+                 alpha=.0001,
+                 beta_1=0.,
+                 beta_2=.9,
+                 dim_latent=100,
+                 batch_size=64
+                 ):
+        super(WganGp, self).__init__()
+        self.lamb = lamb
+        self.n_critic = n_critic
+        self.alpha = alpha
+        self.beta_1 = beta_1
+        self.beta_2 = beta_2
+        self.dim_latent = dim_latent
+        self.batch_size = batch_size
 
         self.Generator = Generator()
-        self.Generator.build((None, 100))
-        self.Critic = Critic(self.c)
+        self.Generator.build((None, self.dim_latent))
+        self.Critic = Critic()
         self.Critic.build((None, 28, 28, 1))
         self.compile()
-        self.hist = []
 
     def compile(self):
-        super(Wgan, self).compile()
-        self.g_optimizer = tf.keras.optimizers.RMSprop(self.alpha)
-        self.c_optimizer = tf.keras.optimizers.RMSprop(self.alpha)
+        self.c_optimizer = tf.keras.optimizers.Adam(learning_rate=self.alpha,
+                                                    beta_1=self.beta_1,
+                                                    beta_2=self.beta_2
+                                                    )
+        self.g_optimizer = tf.keras.optimizers.Adam(learning_rate=self.alpha,
+                                                    beta_1=self.beta_1,
+                                                    beta_2=self.beta_2
+                                                    )
 
     @tf.function
-    def train_step(self, img):
-        img = tf.split(img,
+    def compute_x_hat(self, x, x_tilde):
+        epsilon = tf.random.uniform(minval=0.,
+                                    maxval=1.,
+                                    shape=(self.batch_size, 1, 1, 1)
+                                    )
+        return epsilon * x + (1 - epsilon) * x_tilde
+
+    @tf.function
+    def compute_critic_loss(self, true_logit, fake_logit):
+        loss = tf.reduce_mean(
+            fake_logit
+        ) - tf.reduce_mean(
+            true_logit
+        )
+        return loss
+
+    @tf.function
+    def compute_gen_loss(self, fake_logit):
+        loss = -tf.reduce_mean(
+            fake_logit
+        )
+        return loss
+
+    @tf.function
+    def compute_gp(self, x_hat):
+        with tf.GradientTape() as gp_tape:
+            gp_tape.watch(x_hat)
+            avg_logit = self.Critic(x_hat, training=True)
+        grads = gp_tape.gradient(avg_logit, [x_hat])[0]
+        l2norm = tf.sqrt(tf.reduce_sum(tf.square(grads), axis=[1, 2, 3]))
+        gp = tf.reduce_mean(tf.square(l2norm - 1.0))
+        return gp
+
+    @tf.function
+    def train_step(self, data):
+        img = tf.split(data,
                        axis=0,
                        num_or_size_splits=self.n_critic
                        )
 
-        # 1. update discriminator
-        mean_criticism_loss = 0
+        # 1. Update Critic for self.n_critic times
+        mean_criticism_loss = 0.
         for i in range(self.n_critic):
+            x = img[i]
+            x_tilde = self.Generator(tf.random.normal((tf.shape(x)[0], self.dim_latent)))
+            x_hat = self.compute_x_hat(x, x_tilde)
             with tf.GradientTape() as tape:
-                # Sample x from real data
-                x = img[i]
-                # Sample z from prior
-                z = tf.random.normal(shape=(tf.shape(x)[0], 100))
-                # Compute grads_w : [ 1/m * sigma^m_i=1 f_w(x^i) - 1/m * sigma^m_i=1 f_w(g_theta(z^i)) ]
-                loss = tf.reduce_mean(
-                    self.Critic(x, training=True)
-                ) - tf.reduce_mean(
-                    self.Critic(self.Generator(z, training=False), training=True)
-                )
-            grads_w = tape.gradient(loss, self.Critic.trainable_variables)
-            # Gradient ascent
+                gp = self.compute_gp(x_hat)
+                loss = self.compute_critic_loss(self.Critic(x, training=True),
+                                                self.Critic(x_tilde, training=True)
+                                                ) + gp * self.lamb
+            grads = tape.gradient(loss, self.Critic.trainable_variables)
             self.c_optimizer.apply_gradients(
-                zip([-g for g in grads_w], self.Critic.trainable_variables)
+                zip(grads, self.Critic.trainable_variables)
             )
-            W = self.Critic.trainable_variables
-            [tf.compat.v1.assign(w, tf.clip_by_value(w, -self.c, self.c)) for w in W]
             mean_criticism_loss += loss
+        mean_criticism_loss /= self.n_critic
 
-        # 2. update generator
+        # 2. Update Generator
         with tf.GradientTape() as tape:
-            # Sample z from prior
-            z = tf.random.normal(shape=(tf.shape(x)[0], 100))
-            # Compute grads_theta : - 1/m * sigma^m_i=1 f_w(g_theta(z^i))
-            loss = -tf.reduce_mean(self.Critic(self.Generator(z, training=True), training=False))
-        grads_theta = tape.gradient(loss, self.Generator.trainable_variables)
-        # Gradient descent
+            x_tilde = self.Generator(tf.random.normal((tf.shape(x)[0], self.dim_latent)),
+                                     training=True
+                                     )
+            loss = self.compute_gen_loss(self.Critic(x_tilde))
+        grads = tape.gradient(loss, self.Generator.trainable_variables)
         self.g_optimizer.apply_gradients(
-            zip(grads_theta, self.Generator.trainable_variables)
+            zip(grads, self.Generator.trainable_variables)
         )
 
-        return {'mean_criticism_loss': mean_criticism_loss / self.n_critic, 'generation_loss': loss}
+        return {'mean_criticism_loss': mean_criticism_loss, 'generation_loss': loss}
