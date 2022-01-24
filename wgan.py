@@ -113,7 +113,7 @@ class Wgan(tf.keras.models.Model):
 
     def compile(self):
         super(Wgan, self).compile()
-        self.g_optimizer = tf.keras.optimizers.RMSprop(self.alpha)
+        self.g_optimizer = tf.keras.optimizers.RMSprop(-self.alpha)
         self.c_optimizer = tf.keras.optimizers.RMSprop(self.alpha)
 
     @tf.function
@@ -138,9 +138,9 @@ class Wgan(tf.keras.models.Model):
                     self.Critic(self.Generator(z, training=False), training=True)
                 )
             grads_w = tape.gradient(loss, self.Critic.trainable_variables)
-            # Gradient ascent
+            # Gradient ascent(-alpha)
             self.c_optimizer.apply_gradients(
-                zip([-g for g in grads_w], self.Critic.trainable_variables)
+                zip(grads_w, self.Critic.trainable_variables)
             )
             W = self.Critic.trainable_variables
             [tf.compat.v1.assign(w, tf.clip_by_value(w, -self.c, self.c)) for w in W]
