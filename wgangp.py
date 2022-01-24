@@ -51,7 +51,7 @@ class Critic(tf.keras.layers.Layer):
     '''
     Only replaced batch normalization to layer normalization
     '''
-    def __init__(self, c):
+    def __init__(self):
         super(Critic, self).__init__()
         self.ki = tf.keras.initializers.random_normal(stddev=.02)
 
@@ -127,6 +127,7 @@ class WganGp(tf.keras.models.Model):
         self.compile()
 
     def compile(self):
+        super(WganGp, self).compile()
         self.c_optimizer = tf.keras.optimizers.Adam(learning_rate=self.alpha,
                                                     beta_1=self.beta_1,
                                                     beta_2=self.beta_2
@@ -162,10 +163,8 @@ class WganGp(tf.keras.models.Model):
 
     @tf.function
     def compute_gp(self, x_hat):
-        with tf.GradientTape() as gp_tape:
-            gp_tape.watch(x_hat)
-            avg_logit = self.Critic(x_hat, training=True)
-        grads = gp_tape.gradient(avg_logit, [x_hat])[0]
+        avg_logit = self.Critic(x_hat, training=True)
+        grads = tf.keras.backend.gradients(avg_logit, [x_hat])[0]
         l2norm = tf.sqrt(tf.reduce_sum(tf.square(grads), axis=[1, 2, 3]))
         gp = tf.reduce_mean(tf.square(l2norm - 1.0))
         return gp
@@ -181,9 +180,9 @@ class WganGp(tf.keras.models.Model):
         mean_criticism_loss = 0.
         for i in range(self.n_critic):
             x = img[i]
-            x_tilde = self.Generator(tf.random.normal((tf.shape(x)[0], self.dim_latent)))
-            x_hat = self.compute_x_hat(x, x_tilde)
             with tf.GradientTape() as tape:
+                x_tilde = self.Generator(tf.random.normal((tf.shape(x)[0], self.dim_latent)))
+                x_hat = self.compute_x_hat(x, x_tilde)
                 gp = self.compute_gp(x_hat)
                 loss = self.compute_critic_loss(self.Critic(x, training=True),
                                                 self.Critic(x_tilde, training=True)
@@ -200,7 +199,7 @@ class WganGp(tf.keras.models.Model):
             x_tilde = self.Generator(tf.random.normal((tf.shape(x)[0], self.dim_latent)),
                                      training=True
                                      )
-            loss = self.compute_gen_loss(self.Critic(x_tilde))
+            loss = self.compute_gen_loss(self.Critic(x_tilde, training=False))
         grads = tape.gradient(loss, self.Generator.trainable_variables)
         self.g_optimizer.apply_gradients(
             zip(grads, self.Generator.trainable_variables)

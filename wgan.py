@@ -48,7 +48,7 @@ class Generator(tf.keras.layers.Layer):
 
 
 class Critic(tf.keras.layers.Layer):
-    def __init__(self, c):
+    def __init__(self):
         super(Critic, self).__init__()
         self.ki = tf.keras.initializers.random_normal(stddev=.02)
 
@@ -106,7 +106,7 @@ class Wgan(tf.keras.models.Model):
 
         self.Generator = Generator()
         self.Generator.build((None, 100))
-        self.Critic = Critic(self.c)
+        self.Critic = Critic()
         self.Critic.build((None, 28, 28, 1))
         self.compile()
         self.hist = []
