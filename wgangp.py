@@ -125,6 +125,7 @@ class WganGp(tf.keras.models.Model):
         self.Critic = Critic()
         self.Critic.build((None, 28, 28, 1))
         self.compile()
+        self.hist = []
 
     def compile(self):
         super(WganGp, self).compile()
@@ -186,7 +187,8 @@ class WganGp(tf.keras.models.Model):
                 gp = self.compute_gp(x_hat)
                 loss = self.compute_critic_loss(self.Critic(x, training=True),
                                                 self.Critic(x_tilde, training=True)
-                                                ) + gp * self.lamb
+                                                )
+                loss += gp * self.lamb
             grads = tape.gradient(loss, self.Critic.trainable_variables)
             self.c_optimizer.apply_gradients(
                 zip(grads, self.Critic.trainable_variables)
@@ -199,7 +201,7 @@ class WganGp(tf.keras.models.Model):
             x_tilde = self.Generator(tf.random.normal((tf.shape(x)[0], self.dim_latent)),
                                      training=True
                                      )
-            loss = self.compute_gen_loss(self.Critic(x_tilde, training=False))
+            loss = self.compute_gen_loss(self.Critic(x_tilde))
         grads = tape.gradient(loss, self.Generator.trainable_variables)
         self.g_optimizer.apply_gradients(
             zip(grads, self.Generator.trainable_variables)
