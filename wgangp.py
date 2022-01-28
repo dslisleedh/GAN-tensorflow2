@@ -106,7 +106,7 @@ class WganGp(tf.keras.models.Model):
                  lamb=10.,
                  n_critic=5,
                  alpha=.0001,
-                 beta_1=0.,
+                 beta_1=.5,
                  beta_2=.9,
                  dim_latent=100,
                  batch_size=64
