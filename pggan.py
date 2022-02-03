@@ -40,13 +40,14 @@ class UpscalingConv2D(tf.keras.layers.Layer):
             ])
         else:
             self.forward = tf.keras.Sequential([
-                tf.keras.layers.Conv2DTranspose(filters=self.n_filters,
-                                                kernel_size=(3, 3),
-                                                strides=(2, 2),
-                                                padding='same',
-                                                kernel_initializer='he_normal',
-                                                activation=tf.keras.layers.LeakyReLU(.2)
-                                                ),
+                tf.keras.layers.UpSampling2D(),
+                tf.keras.layers.Conv2D(filters=self.n_filters,
+                                       kernel_size=(3, 3),
+                                       strides=(1, 1),
+                                       padding='same',
+                                       kernel_initializer='he_normal',
+                                       activation=tf.keras.layers.LeakyReLU(.2)
+                                       ),
                 PixelNormalization(),
                 tf.keras.layers.Conv2D(filters=self.n_filters,
                                        kernel_size=(3, 3),
@@ -104,7 +105,8 @@ class DownsamplingConv2D(tf.keras.layers.Layer):
                                        padding='same',
                                        kernel_initializer='he_normal',
                                        activation=tf.keras.layers.LeakyReLU(.2)
-                                       )
+                                       ),
+                Downsampling2D(size=(2, 2))
             ])
 
     def call(self, inputs, **kwargs):
@@ -162,6 +164,7 @@ class ToRGB(tf.keras.layers.Layer):
                                               kernel_size=(1, 1),
                                               strides=(1, 1),
                                               padding='valid',
+                                              kernel_initializer='he_normal'
                                               )
 
     def call(self, inputs, **kwargs):
@@ -175,7 +178,8 @@ class FromRGB(tf.keras.layers.Layer):
         self.forward = tf.keras.layers.Conv2D(filters=self.n_channels,
                                               kernel_size=(1, 1),
                                               strides=(1, 1),
-                                              padding='valid'
+                                              padding='valid',
+                                              kernel_initializer='he_normal'
                                               )
 
     def call(self, inputs, **kwargs):
@@ -184,13 +188,12 @@ class FromRGB(tf.keras.layers.Layer):
 
 class Pggan(tf.keras.models.Model):
     def __init__(self,
-                 build_datasets,
-                 output_channel=3,
+                 build_generator,
                  output_size=512,
-                 dim_latent=256
+                 dim_latent=512,
+                 epslion_drift=.001
                  ):
         super(Pggan, self).__init__()
-        self.output_channel = output_channel
         n_upsampling = int((np.log(output_size) / np.log(2)) - 1)
         if (n_upsampling == 0) | (n_upsampling % 1 != 0):
             assert ValueError('size must power of 2')
@@ -198,30 +201,24 @@ class Pggan(tf.keras.models.Model):
             self.output_size = output_size
             self.n_layers = n_upsampling
         self.dim_latent = dim_latent
+        self.epsilon_drift = epslion_drift
 
-        self.Generator, self.Critic, g_optimizer, c_optimizer = self.progressive_build(build_datasets)
+        self.Generator, self.Critic, g_optimizer, c_optimizer = self.progressive_build(build_generator)
 
     def compile(self, **kwargs):
         super(Pggan, self).compile(**kwargs)
 
     ####### 여기수정
     @tf.function
-    def progressive_build(self, build_dataset):
+    def progressive_build(self, build_generator):
         # Build Generator
-        print('Growing models')
+        print('Building models')
         print('------------------------------------------------------------------------------')
         generator = [UpscalingConv2D(int(np.power(2., self.n_layers-1)), initial=True)]
         for i in range(self.n_layers-1):
-            layer = [UpscalingConv2D(16 * (2**((self.n_layers-1) - (i + 1))))]
-            if i == self.n_layers-2:
-                layer += tf.keras.layers.Conv2D(filters=3,
-                                                kernel_size=(1, 1),
-                                                strides=(1, 1),
-                                                padding='valid',
-                                                kernel_initializer='he_normal'
-                                                )
-                layer = tf.keras.Sequential(layer)
-            generator.append(layer)
+            generator.append([UpscalingConv2D(16 * (2**((self.n_layers-1) - (i + 1))))])
+        torgb = [ToRGB() for _ in range(self.n_layers)]
+
         # Build Critic
         critic = [tf.keras.Sequential([
             tf.keras.layers.Conv2D(filters=16,
@@ -238,15 +235,27 @@ class Pggan(tf.keras.models.Model):
                 critic.append(DownsamplingConv2D(512, last=True))
             else:
                 critic.append(DownsamplingConv2D(32 * (2**i)))
-
+        fromrgb = [FromRGB() for _ in range(self.n_layers)]
+        g_optimizer = tf.keras.optimizers.Adam(0.001,
+                                               beta_1=0,
+                                               beta_2=.99,
+                                               epsilon=1e-8
+                                               )
+        c_optimizer = tf.keras.optimizers.Adam(0.001,
+                                               beta_1=0,
+                                               beta_2=.99,
+                                               epsilon=1e-8
+                                               )
         ### progressive growing build 학습과정 작성하면됨.
 
         for i in range(self.n_layers):
-            print(f'Building resolution {2**(i + 2)}x{2**(i + 2)}')
+            print(f'Building models on resolution {2**(i + 2)}x{2**(i + 2)}')
 
-        g_optimizer = []
-        c_optimizer = []
-        return generator, critic, g_optimizer, c_optimizer
+
+
+        Generator = tf.keras.Sequential(generator + [torgb[-1]])
+        Critic = tf.keras.Sequential([fromrgb[-1]] + critic)
+        return Generator, Critic, g_optimizer, c_optimizer
 
     @tf.function
     def compute_critic_loss(self, true_logit, fake_logit):
@@ -254,6 +263,8 @@ class Pggan(tf.keras.models.Model):
             fake_logit
         ) - tf.reduce_mean(
             true_logit
+        ) + self.epsilon_drift * tf.reduce_mean( # to keep critic close to zero
+            tf.square(true_logit)
         )
         return loss
 

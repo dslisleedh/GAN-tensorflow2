@@ -1,101 +1,130 @@
 import tensorflow as tf
+import tensorflow_addons as tfa
+
+
+class UpsamplingConv2D(tf.keras.layers.Layer):
+    def __init__(self, n_filters):
+        super(UpsamplingConv2D, self).__init__()
+        self.n_filters = n_filters
+
+        self.forward = tf.keras.Sequential([
+            tf.keras.layers.Conv2DTranspose(filters=self.n_filters,
+                                            kernel_size=(5, 5),
+                                            strides=(2, 2),
+                                            padding='same',
+                                            activation='linear',
+                                            kernel_initializer=tf.keras.initializers.random_normal(stddev=0.02),
+                                            use_bias=False
+                                            ),
+            tf.keras.layers.BatchNormalization(),
+            tf.keras.layers.ReLU()
+        ])
+
+    def call(self, inputs, **kwargs):
+        return self.forward(inputs)
 
 
 class Generator(tf.keras.layers.Layer):
-    def __init__(self):
+    def __init__(self, dims=64):
         super(Generator, self).__init__()
-        self.ki = tf.keras.initializers.random_normal(stddev=.02)
+        self.dims = dims
 
-        self.upsampling = tf.keras.Sequential([
-            tf.keras.layers.Dense(7 * 7 * 256,
-                                  activation='linear',
-                                  kernel_initializer=self.ki,
+        self.latent_projection = tf.keras.Sequential([
+            tf.keras.layers.Dense(self.dims * 8 * 4 * 4,
                                   use_bias=False
                                   ),
             tf.keras.layers.BatchNormalization(),
             tf.keras.layers.ReLU(),
-            tf.keras.layers.Reshape((7, 7, 256)),
-            tf.keras.layers.Conv2DTranspose(filters=256,
-                                            kernel_size=(5, 5),
-                                            strides=(2, 2),
-                                            activation='linear',
-                                            padding='same',
-                                            use_bias=False,
-                                            kernel_initializer=self.ki
-                                            ),
-            tf.keras.layers.BatchNormalization(),
-            tf.keras.layers.ReLU(),
-            tf.keras.layers.Conv2DTranspose(filters=128,
-                                            kernel_size=(5, 5),
-                                            strides=(2, 2),
-                                            activation='linear',
-                                            padding='same',
-                                            use_bias=False,
-                                            kernel_initializer=self.ki
-                                            ),
-            tf.keras.layers.BatchNormalization(),
-            tf.keras.layers.ReLU(),
-            tf.keras.layers.Conv2DTranspose(filters=1,
-                                            kernel_size=(5, 5),
+            tf.keras.layers.Reshape((4, 4, self.dims * 8))
+        ])
+
+        self.upsampling = tf.keras.Sequential([
+            # 4
+            UpsamplingConv2D(self.dims * 4),
+            # 8
+            UpsamplingConv2D(self.dims * 2),
+            # 16
+            UpsamplingConv2D(self.dims),
+            # 32
+            UpsamplingConv2D(self.dims // 2),
+            # 64
+            UpsamplingConv2D(self.dims // 4),
+            # 128
+            tf.keras.layers.Conv2DTranspose(filters=3,
+                                            kernel_size=(1, 1),
+                                            strides=(1, 1),
+                                            padding='valid',
                                             activation='tanh',
-                                            padding='same',
-                                            kernel_initializer=self.ki
+                                            kernel_initializer=tf.keras.initializers.random_normal(stddev=.02)
                                             )
+            # 128
         ])
 
     def call(self, inputs, **kwargs):
-        return self.upsampling(inputs)
+        return self.upsampling(self.latent_projection(inputs))
+
+
+class DownsamplingConv2D(tf.keras.layers.Layer):
+    def __init__(self, n_filters):
+        super(DownsamplingConv2D, self).__init__()
+        self.n_filters = n_filters
+
+        self.forward = tf.keras.Sequential([
+            tf.keras.layers.Conv2D(filters=self.n_filters,
+                                   kernel_size=(5, 5),
+                                   strides=(2, 2),
+                                   padding='same',
+                                   activation='linear',
+                                   kernel_initializer=tf.keras.initializers.random_normal(stddev=0.02),
+                                   use_bias=False
+                                   ),
+            tfa.layers.InstanceNormalization(),
+            tf.keras.layers.LeakyReLU(.2)
+        ])
+
+    def call(self, inputs, **kwargs):
+        return self.forward(inputs)
 
 
 class Critic(tf.keras.layers.Layer):
     '''
     Only replaced batch normalization to layer normalization
     '''
-    def __init__(self):
+
+    def __init__(self, dims=128):
         super(Critic, self).__init__()
-        self.ki = tf.keras.initializers.random_normal(stddev=.02)
+        self.dims = dims
 
         self.downsampling = tf.keras.Sequential([
-            tf.keras.layers.Conv2D(filters=128,
+            # 128
+            tf.keras.layers.Conv2D(filters=self.dims // 2,
                                    kernel_size=(5, 5),
-                                   padding='same',
                                    strides=(2, 2),
-                                   activation='linear',
-                                   kernel_initializer=self.ki
+                                   padding='same',
+                                   kernel_initializer=tf.keras.initializers.random_normal(stddev=.02)
                                    ),
             tf.keras.layers.LeakyReLU(.2),
-            tf.keras.layers.Conv2D(filters=128,
-                                   kernel_size=(5, 5),
-                                   padding='same',
-                                   strides=(2, 2),
-                                   activation='linear',
-                                   kernel_initializer=self.ki,
-                                   use_bias=False
-                                   ),
-            tf.keras.layers.LayerNormalization(),
-            tf.keras.layers.LeakyReLU(.2),
-            tf.keras.layers.Conv2D(filters=256,
-                                   kernel_size=(5, 5),
-                                   padding='same',
-                                   strides=(2, 2),
-                                   activation='linear',
-                                   kernel_initializer=self.ki,
-                                   use_bias=False
-                                   ),
-            tf.keras.layers.LayerNormalization(),
-            tf.keras.layers.LeakyReLU(.2),
+            # 64
+            DownsamplingConv2D(self.dims),
+            # 32
+            DownsamplingConv2D(self.dims * 2),
+            # 16
+            DownsamplingConv2D(self.dims * 4),
+            # 8
+            DownsamplingConv2D(self.dims * 8),
+            # 4
             tf.keras.layers.Conv2D(filters=1,
                                    kernel_size=(4, 4),
+                                   padding='valid',
                                    activation='linear',
-                                   kernel_initializer=self.ki,
-                                   padding='valid'
+                                   kernel_initializer=tf.keras.initializers.random_normal(stddev=.02)
                                    ),
+            # 1
             tf.keras.layers.Flatten()
         ])
 
     def call(self, inputs, **kwargs):
         return self.downsampling(inputs)
-
 
 
 class WganGp(tf.keras.models.Model):
@@ -108,8 +137,8 @@ class WganGp(tf.keras.models.Model):
                  alpha=.0001,
                  beta_1=.5,
                  beta_2=.9,
-                 dim_latent=100,
-                 batch_size=64
+                 dim_latent=256,
+                 batch_size=32
                  ):
         super(WganGp, self).__init__()
         self.lamb = lamb
@@ -123,7 +152,7 @@ class WganGp(tf.keras.models.Model):
         self.Generator = Generator()
         self.Generator.build((None, self.dim_latent))
         self.Critic = Critic()
-        self.Critic.build((None, 28, 28, 1))
+        self.Critic.build((None, 128, 128, 3))
         self.compile()
         self.hist = []
 
