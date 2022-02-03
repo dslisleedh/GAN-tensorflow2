@@ -208,6 +208,8 @@ class Pggan(tf.keras.models.Model):
     @tf.function
     def progressive_build(self, build_dataset):
         # Build Generator
+        print('Growing models')
+        print('------------------------------------------------------------------------------')
         generator = [UpscalingConv2D(int(np.power(2., self.n_layers-1)), initial=True)]
         for i in range(self.n_layers-1):
             layer = [UpscalingConv2D(16 * (2**((self.n_layers-1) - (i + 1))))]
@@ -238,6 +240,9 @@ class Pggan(tf.keras.models.Model):
                 critic.append(DownsamplingConv2D(32 * (2**i)))
 
         ### progressive growing build 학습과정 작성하면됨.
+
+        for i in range(self.n_layers):
+            print(f'Building resolution {2**(i + 2)}x{2**(i + 2)}')
 
         g_optimizer = []
         c_optimizer = []
