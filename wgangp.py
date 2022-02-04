@@ -168,14 +168,6 @@ class WganGp(tf.keras.models.Model):
                                                     )
 
     @tf.function
-    def compute_x_hat(self, x, x_tilde):
-        epsilon = tf.random.uniform(minval=0.,
-                                    maxval=1.,
-                                    shape=(self.batch_size, 1, 1, 1)
-                                    )
-        return epsilon * x + (1 - epsilon) * x_tilde
-
-    @tf.function
     def compute_critic_loss(self, true_logit, fake_logit):
         loss = tf.reduce_mean(
             fake_logit
@@ -191,13 +183,6 @@ class WganGp(tf.keras.models.Model):
         )
         return loss
 
-    @tf.function
-    def compute_gp(self, x_hat):
-        avg_logit = self.Critic(x_hat, training=True)
-        grads = tf.keras.backend.gradients(avg_logit, [x_hat])[0]
-        l2norm = tf.sqrt(tf.reduce_sum(tf.square(grads), axis=[1, 2, 3]))
-        gp = tf.reduce_mean(tf.square(l2norm - 1.0))
-        return gp
 
     @tf.function
     def train_step(self, data):
@@ -209,11 +194,21 @@ class WganGp(tf.keras.models.Model):
         # 1. Update Critic for self.n_critic times
         mean_criticism_loss = 0.
         for i in range(self.n_critic):
-            x = img[i]
+            x = data[i]
+            epsilon = tf.random.uniform(minval=0.,
+                                        maxval=1.,
+                                        shape=(self.batch_size, 1, 1, 1)
+                                        )
             with tf.GradientTape() as tape:
-                x_tilde = self.Generator(tf.random.normal((tf.shape(x)[0], self.dim_latent)))
-                x_hat = self.compute_x_hat(x, x_tilde)
-                gp = self.compute_gp(x_hat)
+                with tf.GradientTape() as gp_tape:
+                    x_tilde = self.Generator(tf.random.normal((self.batch_size, self.dim_latent)),
+                                             training=True
+                                             )
+                    x_hat = epsilon * x + (1 - epsilon) * x_tilde
+                    x_hat_disc = self.Critic(x_hat, training=True)
+                gp_grads = gp_tape.gradient(x_hat_disc, x_hat)
+                gp_l2norm = tf.sqrt(tf.reduce_sum(tf.square(gp_grads), axis=[1, 2, 3]))
+                gp = tf.reduce_mean(tf.square(gp_l2norm - 1))
                 loss = self.compute_critic_loss(self.Critic(x, training=True),
                                                 self.Critic(x_tilde, training=True)
                                                 )
