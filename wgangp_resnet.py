@@ -9,42 +9,71 @@ class ResnetBlock(tf.keras.layers.Layer):
         self.bn = bn
         self.identity = identity
 
-        self.forward = tf.keras.Sequential()
-        for _ in range(2):
-            if self.bn:
-                self.forward.add(tf.keras.layers.BatchNormalization())
-            self.forward.add(tf.keras.layers.ReLU())
-            self.forward.add(tf.keras.layers.Conv2D(filters=self.n_channels,
-                                                    kernel_size=(3, 3),
-                                                    padding='same',
-                                                    activation='linear',
-                                                    kernel_initializer=tf.keras.initializers.random_normal(stddev=.02),
-                                                    use_bias=True if not self.bn else False
-                                                    )
-                             )
-        if self.mode == 'down':
-            self.scaling = tf.keras.layers.AveragePooling2D(pool_size=(2, 2),
-                                                            strides=(2, 2),
-                                                            padding='valid'
-                                                            )
-        elif self.mode == 'up':
-            self.scaling = tf.keras.layers.UpSampling2D(size=(2, 2),
-                                                        interpolation='nearest'
+        if mode == 'up':
+            self.forward = tf.keras.Sequential([
+                tf.keras.layers.BatchNormalization(),
+                tf.keras.layers.ReLU(),
+                tf.keras.layers.Conv2D(filters=self.n_channels,
+                                       kernel_size=(3, 3),
+                                       padding='same',
+                                       activation='linear',
+                                       kernel_initializer=tf.keras.initializers.random_normal(stddev=.02),
+                                       use_bias=False
+                                       ),
+                tf.keras.layers.BatchNormalization(),
+                tf.keras.layers.ReLU(),
+                tf.keras.layers.UpSampling2D(size=(2, 2),
+                                             interpolation='nearest'
+                                             ),
+                tf.keras.layers.Conv2D(filters=self.n_channels,
+                                       kernel_size=(3, 3),
+                                       padding='same',
+                                       activation='linear',
+                                       kernel_initializer=tf.keras.initializers.random_normal(stddev=.02),
+                                       use_bias=False
+                                       )
+            ])
+            self.skip = tf.keras.layers.UpSampling2D(size=(2, 2),
+                                                     interpolation='nearest'
+                                                     )
+        else:
+            self.forward = tf.keras.Sequential()
+            for _ in range(2):
+                self.forward.add(tf.keras.layers.ReLU())
+                self.forward.add(tf.keras.layers.Conv2D(filters=self.n_channels,
+                                                        kernel_size=(3, 3),
+                                                        padding='same',
+                                                        activation='linear',
+                                                        kernel_initializer=tf.keras.initializers.random_normal(stddev=.02)
                                                         )
-        else:
-            self.scaling = tf.keras.layers.Layer()
-        if identity:
-            self.skip = tf.keras.layers.Layer()
-        else:
-            self.skip = tf.keras.layers.Conv2D(self.n_channels,
-                                               kernel_size=(1, 1),
-                                               padding='valid',
-                                               activation='linear',
-                                               kernel_initializer=tf.keras.initializers.random_normal(stddev=.02)
-                                               )
+                                 )
+            if self.mode == 'down':
+                self.forward.add(tf.keras.layers.AveragePooling2D(pool_size=(2, 2),
+                                                                  strides=(2, 2),
+                                                                  padding='valid'
+                                                                  )
+                                 )
+            if self.mode == 'down':
+                self.skip = tf.keras.Sequential([
+                    tf.keras.layers.AveragePooling2D(pool_size=(2, 2),
+                                                     strides=(2, 2),
+                                                     padding='valid'
+                                                     )
+                ])
+                if not self.identity:
+                    self.skip.add(tf.keras.layers.Conv2D(filters= self.n_channels,
+                                                         kernel_size=(1, 1),
+                                                         padding='valid',
+                                                         activation='linear',
+                                                         kernel_initializer=tf.keras.initializers.random_normal(stddev=0.02),
+                                                         use_bias=False
+                                                         )
+                                  )
+            else:
+                self.skip = tf.keras.layers.Layer()
 
     def call(self, inputs, **kwargs):
-        return self.scaling(self.forward(inputs) + self.skip(inputs))
+        return self.forward(inputs) + self.skip(inputs)
 
 
 class Generator(tf.keras.layers.Layer):
@@ -73,10 +102,12 @@ class Generator(tf.keras.layers.Layer):
                         bn=True
                         ),
             # 32
-            ResnetBlock(self.z_dims,
-                        mode='up',
-                        bn=True
-                        )
+            tf.keras.layers.Conv2D(3,
+                                   kernel_size=(3, 3),
+                                   padding='same',
+                                   kernel_initializer=tf.keras.initializers.random_normal(stddev=.02),
+                                   activation='tanh'
+                                   )
         ])
 
     def call(self, inputs, *args, **kwargs):
@@ -91,7 +122,8 @@ class Critic(tf.keras.layers.Layer):
         self.forward = tf.keras.Sequential([
             # 32
             ResnetBlock(self.z_dims,
-                        mode='down'
+                        mode='down',
+                        identity=False
                         ),
             # 16
             ResnetBlock(self.z_dims,
@@ -125,7 +157,7 @@ class WganGp(tf.keras.models.Model):
                  beta_1=0.,
                  beta_2=.9,
                  dim_latent=128,
-                 batch_size=32
+                 batch_size=64
                  ):
         super(WganGp, self).__init__()
         self.lamb = lamb
@@ -147,11 +179,13 @@ class WganGp(tf.keras.models.Model):
         super(WganGp, self).compile()
         self.c_optimizer = tf.keras.optimizers.Adam(learning_rate=self.alpha,
                                                     beta_1=self.beta_1,
-                                                    beta_2=self.beta_2
+                                                    beta_2=self.beta_2,
+                                                    decay=self.alpha/100000
                                                     )
         self.g_optimizer = tf.keras.optimizers.Adam(learning_rate=self.alpha,
                                                     beta_1=self.beta_1,
-                                                    beta_2=self.beta_2
+                                                    beta_2=self.beta_2,
+                                                    decay=self.alpha/100000
                                                     )
 
     @tf.function
