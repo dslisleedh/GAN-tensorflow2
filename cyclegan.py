@@ -197,7 +197,7 @@ class Cyclegan(tf.keras.models.Model):
 
     @tf.function
     def gen_loss(self, fake):
-        gen_loss = tf.reduce_mean(tf.losses.mean_squared_error(fake, tf.ones_like(fake)))
+        gen_loss = .5 * tf.reduce_mean(tf.losses.mean_squared_error(fake, tf.ones_like(fake)))
         return gen_loss
 
     @tf.function
@@ -210,10 +210,10 @@ class Cyclegan(tf.keras.models.Model):
     @tf.function
     def update_discriminator(self, x, y, x_hat, y_hat):
         with tf.GradientTape(persistent=True) as tape:
-            disc_y_true = self.Disc_y(y)
-            disc_y_fake = self.Disc_y(y_hat)
-            disc_x_true = self.Disc_x(x)
-            disc_x_fake = self.Disc_x(x_hat)
+            disc_y_true = self.Disc_y(y, training=True)
+            disc_y_fake = self.Disc_y(y_hat, training=True)
+            disc_x_true = self.Disc_x(x, training=True)
+            disc_x_fake = self.Disc_x(x_hat, training=True)
 
             disc_y_loss = self.disc_loss(disc_y_true, disc_y_fake)
             disc_x_loss = self.disc_loss(disc_x_true, disc_x_fake)
@@ -227,10 +227,10 @@ class Cyclegan(tf.keras.models.Model):
     @tf.function
     def update_generator(self, x, y):
         with tf.GradientTape() as tape:
-            y_hat = self.G(x)
-            x_hat = self.F(y)
-            y_recon = self.G(x_hat)
-            x_recon = self.F(y_hat)
+            y_hat = self.G(x, training=True)
+            x_hat = self.F(y, training=True)
+            y_recon = self.G(x_hat, training=True)
+            x_recon = self.F(y_hat, training=True)
 
             gen_g_loss = self.gen_loss(self.Disc_y(y_hat))
             gen_f_loss = self.gen_loss(self.Disc_x(x_hat))

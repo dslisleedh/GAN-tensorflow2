@@ -225,7 +225,7 @@ class WganGp(tf.keras.models.Model):
             x_tilde = self.Generator(tf.random.normal((tf.shape(x)[0], self.dim_latent)),
                                      training=True
                                      )
-            loss = self.compute_gen_loss(self.Critic(x_tilde))
+            loss = self.compute_gen_loss(self.Critic(x_tilde), training=True)
         grads = tape.gradient(loss, self.Generator.trainable_variables)
         self.g_optimizer.apply_gradients(
             zip(grads, self.Generator.trainable_variables)
