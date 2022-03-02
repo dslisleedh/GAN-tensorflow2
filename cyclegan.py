@@ -1,4 +1,5 @@
 import tensorflow as tf
+import tensorflow_addons as tfa
 
 
 class Resnetblock(tf.keras.layers.Layer):
@@ -14,7 +15,7 @@ class Resnetblock(tf.keras.layers.Layer):
                                    use_bias=False,
                                    activation='linear'
                                    ),
-            tf.keras.layers.BatchNormalization(),
+            tfa.layers.InstanceNormalization(),
             tf.keras.layers.ReLU(),
             ReflectPadding2D(1),
             tf.keras.layers.Conv2D(filters=self.n_filters,
@@ -23,7 +24,7 @@ class Resnetblock(tf.keras.layers.Layer):
                                    use_bias=False,
                                    activation='linear'
                                    ),
-            tf.keras.layers.BatchNormalization()
+            tfa.layers.InstanceNormalization()
         ])
 
     def call(self, inputs, **kwargs):
@@ -59,7 +60,7 @@ class Generator(tf.keras.layers.Layer):
                                    use_bias=False,
                                    padding='valid'
                                    ),
-            tf.keras.layers.BatchNormalization(),
+            tfa.layers.InstanceNormalization(),
             tf.keras.layers.ReLU()
         ])
         for i in range(2):
@@ -71,7 +72,7 @@ class Generator(tf.keras.layers.Layer):
                                                          activation='linear'
                                                          )
                                   )
-            self.downsampling.add(tf.keras.layers.BatchNormalization())
+            self.downsampling.add(tfa.layers.InstanceNormalization())
             self.downsampling.add(tf.keras.layers.ReLU())
         self.resblocks = tf.keras.Sequential(
             [Resnetblock() for _ in range(9)]
@@ -85,7 +86,7 @@ class Generator(tf.keras.layers.Layer):
                                                                 use_bias='False'
                                                                 )
                                 )
-            self.upsampling.add(tf.keras.layers.BatchNormalization())
+            self.upsampling.add(tfa.layers.InstanceNormalization())
             self.upsampling.add(tf.keras.layers.ReLU())
         self.upsampling.add(ReflectPadding2D(3))
         self.upsampling.add(tf.keras.layers.Conv2D(filters=3,
@@ -114,7 +115,7 @@ class DiscDownsamplingBlock(tf.keras.layers.Layer):
                                    padding='same',
                                    activation='linear'
                                    ),
-            tf.keras.layers.BatchNormalization(),
+            tfa.layers.InstanceNormalization(),
             tf.keras.layers.LeakyReLU(0.2)
         ])
 
